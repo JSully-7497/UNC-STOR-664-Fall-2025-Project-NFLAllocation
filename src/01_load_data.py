@@ -5,12 +5,7 @@ from pathlib import Path
 #define paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
-PROCESS_DIR = PROJECT_ROOT /"data" / "processed"
-
-#read in manually created data sets
-position_mapping_dict = pd.read_excel(DATA_DIR / "helper_tables" / "position_mapping.xlsx", sheet_name=None)
-draft_position_mapping = position_mapping_dict['drafts_data']
-contracts_position_mapping = position_mapping_dict['contracts_data']
+ANALYZE_DIR = PROJECT_ROOT/"data" / "processed"
 
 def read_raw_contracts_data():
     '''
@@ -44,7 +39,7 @@ def process_cols_column_into_dataframe(contracts_data_with_cols):
 
 
 
-def process_contracts_data(contracts_data_with_cols, all_with_cols_concat):
+def process_contracts_data(contracts_data_with_cols, all_with_cols_concat, contracts_position_mapping):
     '''
     
     combine the contracts data with the data pulled from the cols column. apply some preliminary cleaning
@@ -95,11 +90,106 @@ def process_contracts_data(contracts_data_with_cols, all_with_cols_concat):
 
     return contracts_pos_std_corrected
 
+def export_data_without_cols_column():
+    without_cols_column = (nfl.load_contracts()
+                  .to_pandas()
+                  #[['player','gsis_id','otc_id','position','cols']]
+                  .query('cols.isnull()')
+                    .reset_index(drop = True).reset_index()
+                    )
+
+    inspection = without_cols_column[(without_cols_column['year_signed'] != 2025) & (without_cols_column['year_signed'] >= 2013)].sort_values(by = 'guaranteed')
+
+    inspection.to_excel(ANALYZE_DIR / "data_without_cols.xlsx",index = False)
+
+def process_drafts_data(draft_team_mapping, draft_position_mapping):
+    '''
+    
+    
+    '''
+    drafts_data = (nfl.load_draft_picks().to_pandas()
+               [['season','round','pick','team','gsis_id','pfr_player_name','position','category','side']]
+               .query('season >= 2013 & season < 2025')
+                )
+    #look up table for teams
+
+    fs_val = pd.read_html(DATA_DIR / r"raw" / r"fitz_spieldberg_trade_values.html", flavor = 'lxml')[0]
+    pv_concat_lst = [fs_val[['Pick','Value']]] + [fs_val[[f'Pick.{i}',f'Value.{i}']].rename({f'Pick.{i}': 'Pick', f'Value.{i}':'Value'},axis = 1).dropna() for i in range(1,8)] 
+
+    fs_val_full = pd.concat(pv_concat_lst).rename({'Value' : 'fs_val', 'Pick' : 'pick'}, axis = 1).dropna().astype({'pick':int})
+
+    drafts_w_fs_val = (drafts_data
+                    .merge(fs_val_full, how = 'left', on = 'pick')
+                    .fillna({'fs_val' : 190.0})
+                    .merge(draft_team_mapping, how = 'left', left_on = 'team', right_on = 'DraftTeamAbv')
+                    .rename({'season' : 'year'}, axis = 1)
+                    .merge(draft_position_mapping, how = 'left', left_on = 'position',right_on = 'draft_data_position')
+                        .drop(['draft_data_position','position','category','side_x','side_y'],axis = 1)
+                        .rename({'position_mapping':'position'},axis = 1)
+                    )
+    #Compute how much draft capital the nfl spent each year
+    nfl_total_capital_year = drafts_w_fs_val[['year','pick','fs_val']].groupby('year').sum().reset_index()[['year','fs_val']].rename({'fs_val': 'total_nfl_draft_value'},axis = 1)
+    #calculate how much draft capital each team had each year
+    team_total_capital_year = drafts_w_fs_val[['year','pick','fs_val','TeamID']].groupby(['year','TeamID']).sum().reset_index()[['year','TeamID','fs_val']].rename({'fs_val': 'total_team_draft_value'},axis = 1)
+
+    drafts_val_normalized = (drafts_w_fs_val
+                            .merge(nfl_total_capital_year, how = 'left', on = 'year')
+                            .merge(team_total_capital_year, how = 'left', on = ['year','TeamID'])
+                            .assign(draft_pct_lg = lambda df: df['fs_val']/df['total_nfl_draft_value'])
+                            .assign(draft_pct_team = lambda df: df['fs_val']/df['total_team_draft_value'])
+                            .astype({'year' : str})
+                            )
+
+    
+    return drafts_val_normalized
+
+def export_analysis_data_sets(draft_team_mapping, cleaned_contracts, drafts_value, path):
+    '''
+    export final data sets for analysis
+    
+    '''
+    cap_percent_by_position_year = cleaned_contracts.drop(['player','otc_id','team','num_positions'],axis = 1).groupby(['year','position']).sum().reset_index()
 
 
+    cap_percent_by_position_team_year = cleaned_contracts.drop(['player','otc_id','num_positions'],axis = 1).groupby(['year','team','position']).sum().reset_index()
 
-if __name__ == '__main__':
+    draft_pct_by_position_year = drafts_value[['year','position','draft_pct_lg']].groupby(['year','position']).sum().reset_index()
+
+    draft_pct_by_position_team_year = drafts_value[['year','position','TeamID','draft_pct_lg','draft_pct_team']].groupby(['year','position','TeamID']).sum().reset_index()
+
+    #joined datasets fr actual analysis:
+    capital_by_position_year = draft_pct_by_position_year.merge(cap_percent_by_position_year, how = 'left', on = ['year','position'])
+    capital_by_position_team_year = (draft_pct_by_position_team_year
+                                    .merge(cap_percent_by_position_team_year.merge(draft_team_mapping[['CapTeam','TeamID']].drop_duplicates(), how = 'left', left_on = 'team', right_on = 'CapTeam')
+                                            , how = 'outer', on = ['year','position','TeamID'],indicator = False)
+                                    .fillna({'draft_pct_lg' : 0,'draft_pct_team' : 0})
+                                    .drop(['TeamID','CapTeam'],axis = 1)
+                                    )
+    
+    capital_by_position_year.to_csv(path / 'capital_by_position_year.csv',index = False)
+    capital_by_position_team_year.to_csv(path / 'capital_by_position_team_year.csv', index = False)
+
+def main():
+    #read in manually created data sets
+    position_mapping_dict = pd.read_excel(DATA_DIR / "helper_tables" / "position_mapping.xlsx", sheet_name=None)
+    draft_position_mapping = position_mapping_dict['drafts_data']
+    contracts_position_mapping = position_mapping_dict['contracts_data']
+    draft_team_mapping = pd.read_excel(DATA_DIR / "helper_tables" /'draft_team_mapping.xlsx')
+
+
     raw_contracts_data = read_raw_contracts_data()
     processed_cols_column = process_cols_column_into_dataframe(raw_contracts_data)
-    cleaned_contracts = process_contracts_data(raw_contracts_data, processed_cols_column)
-    
+    cleaned_contracts = process_contracts_data(raw_contracts_data, processed_cols_column, contracts_position_mapping)
+    #Export data without cols column for analysis
+    export_data_without_cols_column()
+    drafts_value = process_drafts_data(draft_team_mapping, draft_position_mapping)
+    export_analysis_data_sets(draft_team_mapping, cleaned_contracts, drafts_value, ANALYZE_DIR)
+
+
+
+if __name__ == "__main__":
+    main()
+
+
+
+
