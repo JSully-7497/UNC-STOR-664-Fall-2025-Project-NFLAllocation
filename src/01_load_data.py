@@ -1,6 +1,7 @@
 import pandas as pd
 import nflreadpy as nfl
 from pathlib import Path
+import numpy as np
 
 #define paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -169,13 +170,60 @@ def export_analysis_data_sets(draft_team_mapping, cleaned_contracts, drafts_valu
     capital_by_position_year.to_csv(path / 'capital_by_position_year.csv',index = False)
     capital_by_position_team_year.to_csv(path / 'capital_by_position_team_year.csv', index = False)
 
+def get_result_count(df, col, result_name):
+        return (df
+                .groupby([col, 'season'])
+                .count()
+                .reset_index()[[col,'season', 'week']]
+                .rename({col:'team', 'week':result_name},axis = 1)
+                .query('team != "TIE"')
+                )
+
+def create_wins_data(team_mapping_wins, path):
+    wins_data = (nfl.load_schedules().to_pandas()
+            .query('season >= 2013 & season < 2025 & game_type == "REG"')
+            # .assign(home_team = lambda df: df.merge(team_mapping_wins, how = 'inner', left_on = 'home_team', right_on = 'WinsTeamAbv')['Team'].values.tolist())
+            # .assign(away_team = lambda df: df.merge(team_mapping_wins, how = 'inner', left_on = 'away_team', right_on = 'WinsTeamAbv')['Team'].values.tolist())
+            .assign(winning_team = lambda df: np.where(df['result'] > 0, df['home_team'],
+                                                       np.where(df['result'] < 0, df['away_team'],
+                                                       'TIE')
+                                                       )
+            )
+            .assign(losing_team = lambda df: np.where(df['result'] > 0, df['away_team'],
+                                                       np.where(df['result'] < 0, df['home_team'],
+                                                       'TIE')
+                                                       ))
+
+            .assign(tie_team_1 = lambda df: np.where((df['winning_team'] == 'TIE'), df['home_team'], np.nan))
+            .assign(tie_team_2 = lambda df: np.where((df['losing_team'] == 'TIE'), df['away_team'], np.nan))
+
+            )[['season','week','winning_team','losing_team','tie_team_1','tie_team_2']]
+
+    
+
+    #have to do losses outer because of the browns
+    win_pct_df = (get_result_count(wins_data, 'winning_team', 'wins')
+                .merge(get_result_count(wins_data, 'losing_team', 'losses'), how = 'outer', on = ['team','season'])
+                .merge(get_result_count(wins_data,'tie_team_1', 'tie_1'), how = 'left', on = ['team','season'])
+                .merge(get_result_count(wins_data,'tie_team_2', 'tie_2'), how = 'left', on = ['team','season'])
+                .fillna(0)
+                .assign(tie = lambda df: df['tie_1'] + df['tie_2'])
+                .drop(['tie_1','tie_2'],axis = 1)
+                .assign(win_pct = lambda df: (df['wins']+ 0.5*df['tie'])/(df['wins']+ df['losses']+ df['tie']))
+                .merge(team_mapping_wins, how = 'left', left_on = 'team', right_on = 'WinsTeamAbv')
+                .drop(['WinsTeamAbv', 'team', 'wins','losses','tie'],axis = 1)
+                .rename({'season':'year'}, axis = 1)
+                )
+    
+    win_pct_df.to_csv(path / 'win_pct_season.csv',index = False)
+
 def main():
     #read in manually created data sets
     position_mapping_dict = pd.read_excel(DATA_DIR / "helper_tables" / "position_mapping.xlsx", sheet_name=None)
     draft_position_mapping = position_mapping_dict['drafts_data']
     contracts_position_mapping = position_mapping_dict['contracts_data']
     draft_team_mapping = pd.read_excel(DATA_DIR / "helper_tables" /'draft_team_mapping.xlsx')
-
+    team_mapping_wins = pd.read_excel(DATA_DIR / "helper_tables" /'team_mapping_wins.xlsx')
 
     raw_contracts_data = read_raw_contracts_data()
     processed_cols_column = process_cols_column_into_dataframe(raw_contracts_data)
@@ -184,8 +232,7 @@ def main():
     export_data_without_cols_column()
     drafts_value = process_drafts_data(draft_team_mapping, draft_position_mapping)
     export_analysis_data_sets(draft_team_mapping, cleaned_contracts, drafts_value, ANALYZE_DIR)
-
-
+    create_wins_data(team_mapping_wins, ANALYZE_DIR)
 
 if __name__ == "__main__":
     main()
