@@ -10,7 +10,7 @@ ANALYZE_DIR = PROJECT_ROOT/"data" / "processed"
 
 def read_raw_contracts_data():
     '''
-    
+    Read in the raw contracts data from the nflreadr repository., grab the columns we want and get rid of rows where the cols column is blank. 
     '''
     contracts_data_with_cols = (nfl.load_contracts()
                     .to_pandas()
@@ -22,7 +22,7 @@ def read_raw_contracts_data():
 
 def process_cols_column_into_dataframe(contracts_data_with_cols):
     '''
-    
+    Take the cols column and process it into a dataframe
     '''
 
     big_concat = []
@@ -92,6 +92,10 @@ def process_contracts_data(contracts_data_with_cols, all_with_cols_concat, contr
     return contracts_pos_std_corrected
 
 def export_data_without_cols_column():
+    '''
+    Look at the data that does not have the cols column to make sure that it is not needed
+    
+    '''
     without_cols_column = (nfl.load_contracts()
                   .to_pandas()
                   #[['player','gsis_id','otc_id','position','cols']]
@@ -105,7 +109,7 @@ def export_data_without_cols_column():
 
 def process_drafts_data(draft_team_mapping, draft_position_mapping):
     '''
-    
+    Load in the raw drafts data, standardize the team and positions, and create the columns we need
     
     '''
     drafts_data = (nfl.load_draft_picks().to_pandas()
@@ -171,6 +175,10 @@ def export_analysis_data_sets(draft_team_mapping, cleaned_contracts, drafts_valu
     capital_by_position_team_year.to_csv(path / 'capital_by_position_team_year.csv', index = False)
 
 def get_result_count(df, col, result_name):
+        '''
+        Helper function to get results for each team
+        
+        '''
         return (df
                 .groupby([col, 'season'])
                 .count()
@@ -180,6 +188,9 @@ def get_result_count(df, col, result_name):
                 )
 
 def create_wins_data(team_mapping_wins, path):
+    '''
+    Process the wins data
+    '''
     wins_data = (nfl.load_schedules().to_pandas()
             .query('season >= 2013 & season < 2025 & game_type == "REG"')
             # .assign(home_team = lambda df: df.merge(team_mapping_wins, how = 'inner', left_on = 'home_team', right_on = 'WinsTeamAbv')['Team'].values.tolist())
