@@ -5,10 +5,10 @@ This folder contains all code used in the project.
 ## Example Structure
 ```text
 src/
-├── 01_load_data.R        # Data import and cleaning
-├── 02_eda.R              # Explore the data, make new datasets as needed 
-├── 03_fit_models.R       # Model fitting and statistical analysis
-├── 04_generate_figures.R # Visualization and table generation
+├── 01_load_data.py     # Data import and cleaning
+├── 02_eda.py             # Explore the data, make new datasets as needed. generate an exploratory figure
+├──      # Model fitting and statistical analysis
+├──  # Visualization and table generation
 ```
 
 ## Expectations

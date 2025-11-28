@@ -78,17 +78,17 @@ In your README.md there should be five sections:
 For example:
 
 
-# stor-664-project-sample
+# stor-664-project
 
 ## Team Members
-- Member 1 (@user1)
-- Member 2 (@user2)
-- Member 3 (@user3)
-- Member 4 (@user4)
+- Jack 
+- Ani
+- Jaehyuk
+- Soumyjyoti
 
 ## Overview
 This repository contains the group project for [STOR 664, Fall 2025].  
-Our goal is to ... using data ... and methods ....
+Our goal is to analyze nfl resource allocation using data from nflreadr and linear regression methods
 Results show ...
 
 ## Repository Structure
@@ -116,14 +116,11 @@ renv::restore()
 ```
 
 Example in Python:
-```python
-pip install -r requirements.txt
-```
+The python files in src use uv. Make sure uv is installed on your machine. Then cd into the directory for the repo, and run uv sync. This will create a virtual environment with all the dependences. From there type,
+source .venv/bin/activate and your environment will be activated with all dependencies installed. 
 
 ### 3. Running Analysis Scripts
-```r
-Rscript scripts/03_generate_figures.R
-```
+For the python scripts you can run the script using uv run 'path to project'. Or use vs code and click the little green play button.
 
 ---
 
