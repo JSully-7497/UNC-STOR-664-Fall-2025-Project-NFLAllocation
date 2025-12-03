@@ -110,3 +110,4 @@ For salary cap spending, any changes happen slowly. Defensive backs (DB) lose a 
 For draft capital, the values move around more from year to year, but clear long-term trends are rare. The only strong pattern we see is that linebackers (LB) get a smaller share of draft picks over time. For most other positions, the estimated slopes are close to zero and not statistically significant, so we do not see a clear increase or decrease.
 
 Overall, our results suggest that the league’s spending and drafting by position are mostly stable over this period. The main changes are small: slightly more investment in OL and WR in cap spending, and slightly less investment in LB in the draft. These results give a numerical summary of how positional value has changed slowly in the NFL.
+
