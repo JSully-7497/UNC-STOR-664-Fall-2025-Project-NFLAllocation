@@ -1,0 +1,112 @@
+---
+title: "STOR 664 Project Report"
+output: pdf_document
+---
+
+```{r}
+library(tidyverse)
+library(broom)
+library(corrplot)
+
+cap_year <- read_csv("C:/Users/soumy/Downloads/capital_by_position_year.csv")
+cap_year <- cap_year %>%
+  mutate(
+    position = factor(position),
+    year_c   = year - min(year)   # e.g., 0 for 2013, 1 for 2014, ...
+  )
+
+glimpse(cap_year)
+summary(cap_year)
+```
+
+
+```{r}
+ggplot(cap_year, aes(x = year, y = cap_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide salary cap share by position over time",
+    x = "Season",
+    y = "Share of league cap"
+  ) +
+  theme_minimal()
+```
+The above figure shows how much of the league’s salary cap each position gets from 2013 to 2024. Defensive line (DL) and offensive line (OL) usually get the biggest shares, followed by defensive backs (DB) and wide receivers (WR). Kicker (K), punter (P), and long snapper (LS) always get very small amounts. Most positions do not change very much over time, but there are a few patterns: OL and WR seem to get a little more cap share over the years, while DB and running back (RB) seem to get a little less.
+```{r}
+ggplot(cap_year, aes(x = year, y = draft_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide draft capital share by position over time",
+    x = "Season",
+    y = "Share of league draft capital"
+  ) +
+  theme_minimal()
+```
+The above figure shows a similar plot, but now for how draft picks are used. Compared to cap spending, the draft shares jump around more from year to year. This makes sense because draft choices depend on how strong each draft class is and what teams need that year. Defensive backs (DB), defensive line (DL), running backs (RB), and wide receivers (WR) usually get the most draft capital, while specialists like kicker (K), punter (P), and long snapper (LS) get very little.
+```{r}
+# Step 4: Full model for cap shares
+formula_cap <- cap_pct_lg ~ position * year_c
+
+model_cap <- lm(formula_cap, data = cap_year)
+summary(model_cap)
+```
+
+\section{Big regression model}
+
+```{r}
+# Step 5: Full model for draft shares
+formula_draft <- draft_pct_lg ~ position * year_c
+
+model_draft <- lm(formula_draft, data = cap_year)
+summary(model_draft)
+
+# Per-position simple time trends for draft share
+draft_slopes <- cap_year %>%
+  group_by(position) %>%
+  do(tidy(lm(draft_pct_lg ~ year_c, data = .))) %>%
+  ungroup() %>%
+  filter(term == "year_c") %>%
+  arrange(desc(estimate)) %>%
+  mutate(
+    slope_pct_points = 100 * estimate
+  )
+
+draft_slopes_report <- draft_slopes %>%
+  mutate(
+    estimate = round(estimate, 5),
+    slope_pct_points = round(slope_pct_points, 3),
+    p.value = signif(p.value, 3)
+  )
+
+draft_slopes_report
+```
+
+\section{Diagnostics}
+
+```{r}
+# Step 6: Diagnostics for cap model
+par(mfrow = c(2, 2))
+plot(model_cap)
+par(mfrow = c(1, 1))
+
+# Step 6b: Diagnostics for draft model
+par(mfrow = c(2, 2))
+plot(model_draft)
+par(mfrow = c(1, 1))
+
+```
+The diagnostic plots for both models look mostly fine. In the residuals vs fitted plots, the points are scattered around zero without a clear pattern, so using a straight-line (linear) trend over time seems okay. The Q–Q plots show small deviations from the straight line at the ends, which is not surprising because we are modelling proportions between 0 and 1. The scale–location plots show that the spread of the residuals is a bit larger for bigger fitted values, but not in a serious way. The residuals vs leverage plots show a few points with higher leverage, but nothing too extreme. Overall, the linear regression assumptions seem reasonable for our purpose of describing general time trends.
+
+\section{Final conclusion}
+We looked at how NFL spending by position has changed over time, using league-wide salary cap shares and draft shares from 2013 to 2024. The plots and regression models show that, for most positions, the shares stay fairly stable from year to year.
+
+For salary cap spending, any changes happen slowly. Defensive backs (DB) lose a small amount of cap share over time, while offensive line (OL) and wide receivers (WR) gain a bit. Specialists such as kicker (K), punter (P), and long snapper (LS) always use only a very small part of the cap, and their trends over time are tiny.
+
+For draft capital, the values move around more from year to year, but clear long-term trends are rare. The only strong pattern we see is that linebackers (LB) get a smaller share of draft picks over time. For most other positions, the estimated slopes are close to zero and not statistically significant, so we do not see a clear increase or decrease.
+
+Overall, our results suggest that the league’s spending and drafting by position are mostly stable over this period. The main changes are small: slightly more investment in OL and WR in cap spending, and slightly less investment in LB in the draft. These results give a numerical summary of how positional value has changed slowly in the NFL.
