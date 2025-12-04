@@ -1,0 +1,400 @@
+---
+title: "664 Project"
+author: "Aniruddhan Ganesaraman"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Objective
+
+The goal of this analysis is to understand how a team’s win percentage varies as a function of its financial and draft resource allocation across different positions.
+
+# Methodology
+
+## Data sources
+
+We combine three datasets describing:
+1. Team–Position–Year Spending: for every team, position, and season, this dataset contains (i) Team share of total cap spending on the position (cap_pct_team); (ii) League share of total cap spending represented by that position (cap_pct_lg); (iii) League share of total draft capital invested in the position (draft_pct_lg). 
+1. Team Win Percentage: Provides each team’s seasonal win percentage.
+
+After merging by team and year, each row corresponds to a team–position–year observation.
+
+The data span multiple NFL seasons and provide information on how teams allocate financial resources across positions such as quarterback (QB), running back (RB), offensive line (OL), defensive line (DL), defensive backs (DB), and others. The primary response variable is the team’s seasonal win percentage.
+
+## Data preparation
+
+The spending dataset is structured at the team–position–year level. Because each team-year has multiple positions (QB, RB, WR, TE, OL, DL, LB, DB, etc.), the raw data is in long format. Linear models require one row per team-year. To analyze how the allocation of spending across positions relates to winning, we performed the following preprocessing steps:
+
+1. Merge spending data with win percentage using team and year as keys.
+1. Aggregate spending to create total cap percentage per team-year for exploratory analysis.
+1. Reshape the dataset to wide format, where each row corresponds to a team-season and columns represent spending proportions for each position.
+1. Standardize variable names and ensure completeness, replacing missing position values with zero for teams that spent nothing at a specific position that year.
+
+This creates three predictors for each position, capturing:
+1. Team-Level Spending: How each team allocates cap resources internally.
+1. League-Level Spending: How expensive the position is league-wide in a given year.
+1. Draft Importance: How much draft capital the league invests in that position.
+
+The response variable is the team’s season win percentage.
+
+```{r}
+# ---------------------------------------------------------
+# 1. Load libraries and read data
+# ---------------------------------------------------------
+library(tidyverse)
+library(dplyr)
+library(glmnet)
+library(car)
+library(corrplot)
+library(broom)
+
+cap_team <- read_csv("/Users/ganesaramankalyanasundaram/Desktop/capital_by_position_team_year.csv")
+cap_year <- read_csv("/Users/ganesaramankalyanasundaram/Desktop/capital_by_position_year.csv")
+win_pct <- read_csv("/Users/ganesaramankalyanasundaram/Desktop/win_pct_season.csv")
+
+# Standardize names
+cap_team <- cap_team %>% rename(team = team, year = year)
+win_pct  <- win_pct %>% rename(team = Team, year = year)
+
+# Merge
+df <- cap_team %>%
+  left_join(win_pct, by = c("team", "year"))
+```
+
+
+```{r}
+df_wide <- df %>%
+  dplyr::select(team, year, position, cap_pct_team, cap_pct_lg, draft_pct_lg, win_pct) %>%
+  pivot_wider(
+    names_from = position,
+    values_from = c(cap_pct_team, cap_pct_lg, draft_pct_lg),
+    values_fill = 0
+  )
+```
+
+```{r}
+# Identify columns NOT to use as predictors
+non_predictors <- c("team", "year", "win_pct")
+
+# Identify predictor columns
+predictors <- setdiff(names(df_wide), non_predictors)
+```
+
+## Exploratory Data Analysis
+
+/Users/ganesaramankalyanasundaram/Desktop
+
+Distribution of win percentage:
+
+```{r}
+ggplot(df_wide, aes(x = win_pct)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Team Win Percentage",
+       x = "Win Percentage", y = "Count") +
+  theme_minimal()
+
+```
+
+Win percentage by year:
+
+```{r}
+df_wide %>%
+  group_by(year) %>%
+  summarise(mean_win_pct = mean(win_pct, na.rm = TRUE),
+            sd_win_pct = sd(win_pct, na.rm = TRUE)) %>%
+  ggplot(aes(x = year, y = mean_win_pct)) +
+  geom_line() +
+  geom_ribbon(aes(ymin = mean_win_pct - sd_win_pct,
+                  ymax = mean_win_pct + sd_win_pct), alpha = 0.2) +
+  labs(title = "Average Win Percentage by Year",
+       x = "Year", y = "Mean Win %") +
+  theme_minimal()
+```
+
+Relationship between QB spending and winning
+
+```{r}
+ggplot(df_wide, aes(x = cap_pct_team_QB, y = win_pct)) +
+  geom_point(alpha = 0.5) +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "QB Spending vs Win Percentage",
+       x = "Team QB Cap %", y = "Win %") +
+  theme_minimal()
+```
+
+# Model fitting
+
+Three modeling approaches were used to evaluate the relationship between positional spending and win percentage:
+
+## Full Linear regression model
+
+We start with a full multiple linear regression model including all position-level predictors:
+
+$$\text{win\_pct}_{t,y} = \beta_0 + \sum_{p} \left[ \beta_{p}^{(T)} \cdot \text{cap\_pct\_team}_{p,t,y} + \beta_{p}^{(L)} \cdot \text{cap\_pct\_lg}_{p,t,y} + \beta_{p}^{(D)} \cdot \text{draft\_pct\_lg}_{p,t,y} \right] + \epsilon_{t,y}$$
+This model can be used to estimate:
+1. Which positions are associated with improved performance when a team invests more.
+1. How positional value across the league relates to winning.
+1. Whether high-draft positions correspond to on-field success.
+
+This model is high-dimensional and likely collinear (positions are often interdependent), so further model refinement is used.
+
+Standard diagnostic checks (residuals vs fitted, Q–Q plot, scale–location plot, leverage plot) are used to assess assumptions of homoscedasticity, normality, and influence.
+
+```{r}
+
+formula_lm <- reformulate(termlabels = predictors, response = "win_pct")
+
+model_lm <- lm(formula_lm, data = df_wide)
+
+summary(model_lm)
+```
+```{r}
+# ------------------------------
+# Diagnostic Plots for LM
+# ------------------------------
+library(ggplot2)
+
+# Base R diagnostic plots (simple and standard)
+par(mfrow=c(2,2))
+plot(model_lm)
+par(mfrow=c(1,1))
+
+# Custom ggplot2 diagnostic plots -------------------------
+
+# Residuals vs Fitted
+p1 <- ggplot(data.frame(fitted = fitted(model_lm),
+                        residuals = resid(model_lm)),
+             aes(fitted, residuals)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(title="Residuals vs Fitted",
+       x="Fitted Values", y="Residuals")
+
+# QQ plot
+p2 <- ggplot(data.frame(sample = resid(model_lm)),
+             aes(sample = sample)) +
+  stat_qq() +
+  stat_qq_line(color="red") +
+  labs(title="Normal Q-Q Plot")
+
+# Scale-Location Plot
+p3 <- ggplot(data.frame(fitted = fitted(model_lm),
+                        sqrt_resid = sqrt(abs(resid(model_lm)))),
+             aes(fitted, sqrt_resid)) +
+  geom_point(alpha=0.6) +
+  geom_smooth(method="loess", se=FALSE, color="blue") +
+  labs(title="Scale-Location Plot",
+       y="sqrt(|Residuals|)", x="Fitted")
+
+# Residuals vs Leverage
+lev <- hatvalues(model_lm)
+p4 <- ggplot(data.frame(lev = lev, residuals = resid(model_lm)),
+             aes(lev, residuals)) +
+  geom_point(alpha=0.6) +
+  labs(title="Residuals vs Leverage",
+       x="Leverage", y="Residuals")
+
+# Display all plots
+library(patchwork)
+(p1 | p2) / (p3 | p4)
+
+```
+
+The full linear model suffers from severe multicollinearity (14 undefined coefficients). Among the estimable coefficients:
+1. draft_pct_lg_QB has a negative coefficient (-8.05, p=0.001), suggesting that in years when the league invests more draft capital in QBs, team win percentages are lower. This might be because (i) Teams drafting QBs early are often rebuilding (poor teams); (ii) Rookie QBs may hurt win percentage in their first year. 
+1. draft_pct_lg_DB (-4.17, p=0.049) shows a similar negative pattern. 
+1. Team-level spending coefficients are all positive but non-significant, likely due to multicollinearity, as indicated in the plot below. 
+
+```{r}
+cor_matrix <- cor(df_wide[, predictors], use = "complete.obs")
+
+corrplot(cor_matrix, method = "color", type = "upper", 
+         tl.cex = 0.6, tl.col = "black",
+         title = "Correlation Matrix of Predictors")
+```
+
+
+## Stepwise AIC model 
+
+To obtain a more interpretable model, we apply bidirectional stepwise selection using Akaike Information Criterion (AIC). We start from the full model, iteratively add or remove predictors, and stop when AIC cannot be reduced further. This yields a reduced linear model that balances model complexity with predictive accuracy. The resulting model highlights positions and spending metrics most strongly associated with win percentage.
+
+
+```{r}
+step_model <- MASS::stepAIC(model_lm, direction = "both", trace = FALSE)
+summary(step_model)
+
+
+```
+
+```{r}
+aic_values <- data.frame(
+  Step = seq_len(nrow(step_model$anova)),
+  AIC = step_model$anova$AIC
+)
+
+ggplot(aic_values, aes(Step, AIC)) +
+  geom_line() +
+  geom_point() +
+  labs(title="Stepwise Selection: AIC Path")
+```
+
+The stepwise AIC procedure selected five predictors:
+1. cap_pct_team_VDU (-0.73, p<0.001): Strong negative effect. Teams spending more on VDU have lower win percentages. This likely reflects poor cap management or dead money from released players.
+1. draft_pct_lg_QB (-8.07, p<0.001): Confirms the full model finding. League-wide QB draft investment negatively predicts win percentage.
+1. draft_pct_lg_DB (-3.74, p=0.059): Marginally significant negative effect for defensive backs draft capital.
+1. cap_pct_team_WR (-0.39, p=0.12): Non-significant but retained by AIC. Suggests spending more on WRs may not improve winning.
+1. draft_pct_lg_LS (53.73, p=0.16): Large but non-significant. Long snappers represent tiny spending, so high variance is expected.
+
+An $R^2$ of 0.164 indicates that these five variables explain about 16% of the variance in win percentage. 
+
+```{r}
+model_comparison <- data.frame(
+  Model = c("Full Model", "Stepwise Model"),
+  R_squared = c(summary(model_lm)$r.squared, 
+                summary(step_model)$r.squared),
+  Adj_R_squared = c(summary(model_lm)$adj.r.squared, 
+                    summary(step_model)$adj.r.squared),
+  AIC = c(AIC(model_lm), AIC(step_model)),
+  BIC = c(BIC(model_lm), BIC(step_model)),
+  Num_Predictors = c(22, 5)
+)
+
+print(model_comparison)
+```
+
+## Elastic net regularized regression
+
+Because the predictor set is large and columns are highly correlated (e.g., teams that spend heavily on secondary positions may also spend heavily on linebackers), we also fit an elastic net model. Elastic net combines L1 (lasso) and L2 (ridge) penalties:
+
+$$\hat{\beta} = \underset{\beta}{\arg\min} \left[ \| \mathbf{y} - \mathbf{X}\beta \|_{2}^{2} + \lambda \left( \alpha \|\beta\|_{1} + (1-\alpha) \|\beta\|_{2}^{2} \right) \right]$$
+
+We set $\alpha = 0.5$, i.e. give equal weights to lasso and ridge penalties. 
+
+This approach automatically (i) Handles multicollinearity; (ii) Performs automatic variable selection; (iii) Shrinks unstable coefficients toward zero; (iv) Stabilizes estimates across correlated position groups. 
+
+Further, we use a 10-fold cros validation to select the optimal tuning parameter $\lambda$. 
+
+```{r}
+# Matrix of predictors
+X <- df_wide %>% dplyr::select(all_of(predictors)) %>% as.matrix()
+
+# Response vector
+y <- df_wide$win_pct
+
+set.seed(123)
+cv_mod <- cv.glmnet(X, y, alpha = 0.5)
+
+plot(cv_mod)
+title("Elastic Net Cross-Validation Curve")
+
+best_lambda <- cv_mod$lambda.min
+best_lambda
+
+elastic_mod <- glmnet(X, y, alpha = 0.5, lambda = best_lambda)
+
+print(elastic_mod)
+
+coef(elastic_mod)
+```
+
+The elastic net selected only 4 non-zero coefficients (plus intercept), providing the most parsimonious model:
+
+1. cap_pct_team_VDU (-0.27): Negative effect of VDU spending (shrunk from -0.73 in stepwise)
+1. cap_pct_lg_VDU (-8.56): League-wide VDU spending also negative
+1. draft_pct_lg_DB (-0.05): Very small negative effect
+1. draft_pct_lg_QB (-3.74): QB draft capital remains negative (shrunk from -8.07)
+
+The elastic net dramatically shrinks most coefficients to zero, keeping only the most stable predictors. The model explains 13.4% of deviance.
+
+```{r}
+elastic_coefs <- as.matrix(coef(elastic_mod))
+elastic_coefs_df <- data.frame(
+  term = rownames(elastic_coefs),
+  estimate = elastic_coefs[,1]
+) %>%
+  filter(estimate != 0, term != "(Intercept)")
+
+ggplot(elastic_coefs_df, aes(x = reorder(term, estimate), y = estimate)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  labs(title = "Elastic Net: Non-Zero Coefficients",
+       x = "Predictor", y = "Coefficient") +
+  theme_minimal()
+```
+
+```{r}
+predictions_df <- data.frame(
+  actual = df_wide$win_pct,
+  lm_pred = predict(model_lm, df_wide),
+  step_pred = predict(step_model, df_wide),
+  elastic_pred = as.vector(predict(elastic_mod, newx = X))
+)
+
+# Calculate RMSE for each model
+rmse <- predictions_df %>%
+  summarise(
+    RMSE_Full = sqrt(mean((actual - lm_pred)^2)),
+    RMSE_Stepwise = sqrt(mean((actual - step_pred)^2)),
+    RMSE_Elastic = sqrt(mean((actual - elastic_pred)^2))
+  )
+
+print(rmse)
+```
+
+```{r}
+
+# Scatter plots of predicted vs actual
+library(gridExtra)
+
+p0 <- ggplot(predictions_df, aes(actual, lm_pred)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Linear Model", x = "Actual Win %", y = "Predicted") +
+  theme_minimal()
+
+p1 <- ggplot(predictions_df, aes(actual, step_pred)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Stepwise Model", x = "Actual Win %", y = "Predicted") +
+  theme_minimal()
+
+p2 <- ggplot(predictions_df, aes(actual, elastic_pred)) +
+  geom_point(alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red") +
+  labs(title = "Elastic Net Model", x = "Actual Win %", y = "Predicted") +
+  theme_minimal()
+
+grid.arrange(p0, p1, p2, ncol = 3)
+```
+
+
+# Summary 
+
+This analysis examined the relationship between NFL team resource allocation (salary cap spending and draft capital) across positions and team win percentage over multiple seasons. Three modeling approaches (linear models, stepwise AIC model selection, and elastic net) were employed to handle the high-dimensional, collinear nature of positional spending data.
+
+## Model comparison
+
+1. The full linear model suffered from perfect multicollinearity, with 14 undefined coefficients due to spending constraints. 
+1. Stepwise selection identified 5 predictors, achieving parsimony while maintaining explanatory power (Adj. $R^2$ = 0.153). 
+1. Elastic net regularization provided the most conservative model with only 4 non-zero coefficients, prioritizing prediction stability over fit. 
+
+## Key findings:
+
+1. Limited Predictive Power: All models explain only 13-16% of variance in win percentage, suggesting that resource allocation alone is not a strong predictor of team success. Other factors such as coaching, player health, schedule strength, and execution likely dominate winning.
+1. Quarterback Draft Capital: The most consistent finding across all models is a negative relationship between league-wide QB draft investment and team win percentage. This result likely reflects that (a) QB-needy teams are often already struggling, and (b) rookie QBs typically don't contribute to winning immediately.
+1. VDU Spending as a Red Flag: Teams allocating higher percentages to VDU positions, likely representing dead money or cap penalties, show significantly lower win percentages. This confirms that inefficient cap management hurts performance.
+1. Defensive Back Investment: League-wide draft investment in defensive backs shows a negative association with winning, though this effect is less stable than the QB finding.
+1. No Significant Positive Associations: Surprisingly, no position showed a strong, significant positive relationship between team spending and winning. This suggests that execution and player quality matter more than raw allocation.
+
+## Limitations
+
+1. The analysis did not account for player quality, coaching effectiveness, or injury impacts. 
+1. Year-to-year carryover effects (e.g., drafted players contributing across multiple seasons) are not captured. 
+
+

@@ -1,0 +1,104 @@
+---
+title: "STOR 664"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE, results='hide'}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(glmnet)
+
+```
+
+# Question 2: How different are allocations with respect to teams? 
+ 
+## Assumption
+
+Throughout this section, we assume that the capital strategy of each team does not change during the period. Therefore, each year represents an i.i.d.\ sample from There own distribution. 
+ 
+## Explanatory Data Analysis
+We begin with visualizing the data with scatter plots. In the below scatter plots, each subplots corresponds to one position. $x$-axis is team names (alphabetical order), and $y$-axis is the salary cap percentage (\%). 
+
+```{r chunk1}
+data = read.csv('../data/processed/capital_by_position_team_year.csv')
+# names(data)
+position_list = unique(data$position)
+team_list = unique(data$team)
+
+ggplot(data=data) +
+    geom_point(mapping = aes(x=team, y=cap_pct_team*100)) + 
+    facet_wrap(~position) + 
+    theme_bw() + 
+    ggtitle('Salary cap percentage for each tea, by position') + 
+    xlab('Team (Alphabetical order)') + 
+    ylab('Salary cap percentage (%)')
+```
+
+As we can see in these plots, we can classify positions by the overall scale of salary cap: K, LS and P occupy the lowest, LB, RB, and TE are in the middle, and DB, DL, OL, QB and WR are in the highest percentages. For each scatter plot, the distributions appear relatively flat across teams (except for VDU). Nonetheless, small fluctuations are present in several positions, of which we scrutinize by performing hypothesis testing. 
+
+## Hypothesis testing in each position data
+
+We first divide the dataset by positions. In the below, we ignore VDU since we assume VDU is mainly determined by the external environment rather than salary cap strategies. 
+
+```{r test}
+data_by_position = lapply(position_list, function(pos) data[data$position == pos,])
+names(data_by_position) = position_list
+```
+
+With each sub-dataset, we perform a linear regression model
+$$
+\text{Salary cap}_\text{pos} = \beta_0^\text{pos} + \sum_{i=1}^{32} \beta_{i}^\text{pos} \mathbf 1_{i\text{-th Team}}, 
+$$
+where $\text{pos} \in \{DB, DL, \cdots, WR\}$. Here $\beta_0^\text{pos}$ denotes the average among the league. As a result, we perform a multiple hypothesis testing with hypotheses
+$$
+H_{0i}^\text{pos} : \beta_i^\text{pos} = 0
+\quad \text{v.s.}\quad
+H_{1i}^\text{pos} : \beta_i^\text{pos} \neq 0, 
+\qquad i\in \{1, 2, \cdots, 12\}. 
+$$
+We adapt a Holm-Bonferroni correction to control the family-wise error rate (FWER) with $\alpha = 0.05$. 
+
+```{r}
+# data_pos = data_by_position$DB
+# beta_zero = mean(data_pos$cap_pct_team)
+# n = length(data_pos$cap_pct_team)
+# lm(cap_pct_team~team-1, data=data_pos, offset=rep(beta_zero, n))
+
+lm_by_position = lapply(data_by_position, function(data_pos) {
+    beta_zero = mean(data_pos$cap_pct_team)
+    n = length(data_pos$cap_pct_team)
+    lm(cap_pct_team~team-1, data=data_pos, offset=rep(beta_zero, n))
+})
+
+coeff_by_position = lapply(lm_by_position, function(lm_obj) summary(lm_obj)$coefficients)
+
+# Holm-Bonferroni correction with level alpha = 0.05
+
+HB_correction_by_position = lapply(coeff_by_position, function(coeff, alpha = 0.05) {
+    pval = coeff[,"Pr(>|t|)"]
+    ord = order(pval)
+    pval_ordered = pval[ord]
+    
+    K = length(pval)
+    rejection_rho = alpha / (K + 1 - (1:K))
+    k = min(which(pval_ordered > rejection_rho))
+    
+    res = coeff[ord[1:(k-1)],]
+    if(k<=2) { 
+        res = t(res)
+        rownames(res) = rownames(coeff)[ord[1]]
+    }
+    return(res)
+}, alpha=0.05)
+
+HB_correction_by_position
+```
+
+## Interpretation
+
+In each position, 1-4 teams have significantly different salary cap strategies compared to the league average. For example, Detroit Lions invest about 3.02\% more of their salary cap in the QB position compared to the league average. 
