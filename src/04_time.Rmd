@@ -100,3 +100,14 @@ plot(model_draft)
 par(mfrow = c(1, 1))
 
 ```
+The diagnostic plots for both models look mostly fine. In the residuals vs fitted plots, the points are scattered around zero without a clear pattern, so using a straight-line (linear) trend over time seems okay. The Q–Q plots show small deviations from the straight line at the ends, which is not surprising because we are modelling proportions between 0 and 1. The scale–location plots show that the spread of the residuals is a bit larger for bigger fitted values, but not in a serious way. The residuals vs leverage plots show a few points with higher leverage, but nothing too extreme. Overall, the linear regression assumptions seem reasonable for our purpose of describing general time trends.
+
+\section{Final conclusion}
+We looked at how NFL spending by position has changed over time, using league-wide salary cap shares and draft shares from 2013 to 2024. The plots and regression models show that, for most positions, the shares stay fairly stable from year to year.
+
+For salary cap spending, any changes happen slowly. Defensive backs (DB) lose a small amount of cap share over time, while offensive line (OL) and wide receivers (WR) gain a bit. Specialists such as kicker (K), punter (P), and long snapper (LS) always use only a very small part of the cap, and their trends over time are tiny.
+
+For draft capital, the values move around more from year to year, but clear long-term trends are rare. The only strong pattern we see is that linebackers (LB) get a smaller share of draft picks over time. For most other positions, the estimated slopes are close to zero and not statistically significant, so we do not see a clear increase or decrease.
+
+Overall, our results suggest that the league’s spending and drafting by position are mostly stable over this period. The main changes are small: slightly more investment in OL and WR in cap spending, and slightly less investment in LB in the draft. These results give a numerical summary of how positional value has changed slowly in the NFL.
+
