@@ -1,0 +1,335 @@
+---
+title: "STOR 664 Team Project Part 2"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library, message=FALSE, results='hide'}
+library(tidyverse)
+library(broom)
+library(corrplot)
+library(dplyr)
+library(glmnet)
+library(car)
+library(ggplot2)
+```
+
+# Question 1: How are allocations changing over time?
+```{r}
+cap_year <- read_csv("../data/processed/capital_by_position_year.csv")
+cap_year <- cap_year %>%
+  mutate(
+    position = factor(position),
+    year_c   = year - min(year)   # e.g., 0 for 2013, 1 for 2014, ...
+  )
+
+glimpse(cap_year)
+summary(cap_year)
+```
+
+
+```{r}
+ggplot(cap_year, aes(x = year, y = cap_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide salary cap share by position over time",
+    x = "Season",
+    y = "Share of league cap"
+  ) +
+  theme_minimal()
+```
+The above figure shows how much of the league’s salary cap each position gets from 2013 to 2024. Defensive line (DL) and offensive line (OL) usually get the biggest shares, followed by defensive backs (DB) and wide receivers (WR). Kicker (K), punter (P), and long snapper (LS) always get very small amounts. Most positions do not change very much over time, but there are a few patterns: OL and WR seem to get a little more cap share over the years, while DB and running back (RB) seem to get a little less.
+```{r}
+ggplot(cap_year, aes(x = year, y = draft_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide draft capital share by position over time",
+    x = "Season",
+    y = "Share of league draft capital"
+  ) +
+  theme_minimal()
+```
+The above figure shows a similar plot, but now for how draft picks are used. Compared to cap spending, the draft shares jump around more from year to year. This makes sense because draft choices depend on how strong each draft class is and what teams need that year. Defensive backs (DB), defensive line (DL), running backs (RB), and wide receivers (WR) usually get the most draft capital, while specialists like kicker (K), punter (P), and long snapper (LS) get very little.
+```{r}
+# Step 4: Full model for cap shares
+formula_cap <- cap_pct_lg ~ position * year_c
+
+model_cap <- lm(formula_cap, data = cap_year)
+summary(model_cap)
+```
+
+\section{Big regression model}
+
+```{r}
+# Step 5: Full model for draft shares
+formula_draft <- draft_pct_lg ~ position * year_c
+
+model_draft <- lm(formula_draft, data = cap_year)
+summary(model_draft)
+
+# Per-position simple time trends for draft share
+draft_slopes <- cap_year %>%
+  group_by(position) %>%
+  do(tidy(lm(draft_pct_lg ~ year_c, data = .))) %>%
+  ungroup() %>%
+  filter(term == "year_c") %>%
+  arrange(desc(estimate)) %>%
+  mutate(
+    slope_pct_points = 100 * estimate
+  )
+
+draft_slopes_report <- draft_slopes %>%
+  mutate(
+    estimate = round(estimate, 5),
+    slope_pct_points = round(slope_pct_points, 3),
+    p.value = signif(p.value, 3)
+  )
+
+draft_slopes_report
+```
+
+\section{Diagnostics}
+
+```{r}
+# Step 6: Diagnostics for cap model
+par(mfrow = c(2, 2))
+plot(model_cap)
+par(mfrow = c(1, 1))
+
+# Step 6b: Diagnostics for draft model
+par(mfrow = c(2, 2))
+plot(model_draft)
+par(mfrow = c(1, 1))
+
+```
+The diagnostic plots for both models look mostly fine. In the residuals vs fitted plots, the points are scattered around zero without a clear pattern, so using a straight-line (linear) trend over time seems okay. The Q–Q plots show small deviations from the straight line at the ends, which is not surprising because we are modelling proportions between 0 and 1. The scale–location plots show that the spread of the residuals is a bit larger for bigger fitted values, but not in a serious way. The residuals vs leverage plots show a few points with higher leverage, but nothing too extreme. Overall, the linear regression assumptions seem reasonable for our purpose of describing general time trends.
+
+\section{Final conclusion}
+We looked at how NFL spending by position has changed over time, using league-wide salary cap shares and draft shares from 2013 to 2024. The plots and regression models show that, for most positions, the shares stay fairly stable from year to year.
+
+For salary cap spending, any changes happen slowly. Defensive backs (DB) lose a small amount of cap share over time, while offensive line (OL) and wide receivers (WR) gain a bit. Specialists such as kicker (K), punter (P), and long snapper (LS) always use only a very small part of the cap, and their trends over time are tiny.
+
+For draft capital, the values move around more from year to year, but clear long-term trends are rare. The only strong pattern we see is that linebackers (LB) get a smaller share of draft picks over time. For most other positions, the estimated slopes are close to zero and not statistically significant, so we do not see a clear increase or decrease.
+
+Overall, our results suggest that the league’s spending and drafting by position are mostly stable over this period. The main changes are small: slightly more investment in OL and WR in cap spending, and slightly less investment in LB in the draft. These results give a numerical summary of how positional value has changed slowly in the NFL.
+
+
+
+# Question 2: How different are allocations with respect to teams? 
+ 
+## Assumption
+
+Throughout this section, we assume that the capital strategy of each team does not change during the period. Therefore, each year represents an i.i.d.\ sample from There own distribution. 
+ 
+## Explanatory Data Analysis
+We begin with visualizing the data with scatter plots. In the below scatter plots, each subplots corresponds to one position. $x$-axis is team names (alphabetical order), and $y$-axis is the salary cap percentage (\%). 
+
+```{r chunk1}
+data = read.csv('../data/processed/capital_by_position_team_year.csv')
+# names(data)
+position_list = unique(data$position)
+team_list = unique(data$team)
+
+ggplot(data=data) +
+    geom_point(mapping = aes(x=team, y=cap_pct_team*100)) + 
+    facet_wrap(~position) + 
+    theme_bw() + 
+    ggtitle('Salary cap percentage for each tea, by position') + 
+    xlab('Team (Alphabetical order)') + 
+    ylab('Salary cap percentage (%)')
+```
+
+As we can see in these plots, we can classify positions by the overall scale of salary cap: K, LS and P occupy the lowest, LB, RB, and TE are in the middle, and DB, DL, OL, QB and WR are in the highest percentages. For each scatter plot, the distributions appear relatively flat across teams (except for VDU). Nonetheless, small fluctuations are present in several positions, of which we scrutinize by performing hypothesis testing. 
+
+## Hypothesis testing in each position data
+
+We first divide the dataset by positions. In the below, we ignore VDU since we assume VDU is mainly determined by the external environment rather than salary cap strategies. 
+
+```{r test}
+data_by_position = lapply(position_list, function(pos) data[data$position == pos,])
+names(data_by_position) = position_list
+```
+
+With each sub-dataset, we perform a linear regression model
+$$
+\text{Salary cap}_\text{pos} = \beta_0^\text{pos} + \sum_{i=1}^{32} \beta_{i}^\text{pos} \mathbf 1_{i\text{-th Team}}, 
+$$
+where $\text{pos} \in \{DB, DL, \cdots, WR\}$. Here $\beta_0^\text{pos}$ denotes the average among the league. As a result, we perform a multiple hypothesis testing with hypotheses
+$$
+H_{0i}^\text{pos} : \beta_i^\text{pos} = 0
+\quad \text{v.s.}\quad
+H_{1i}^\text{pos} : \beta_i^\text{pos} \neq 0, 
+\qquad i\in \{1, 2, \cdots, 12\}. 
+$$
+We adapt a Holm-Bonferroni correction to control the family-wise error rate (FWER) with $\alpha = 0.05$. 
+
+```{r}
+# data_pos = data_by_position$DB
+# beta_zero = mean(data_pos$cap_pct_team)
+# n = length(data_pos$cap_pct_team)
+# lm(cap_pct_team~team-1, data=data_pos, offset=rep(beta_zero, n))
+
+lm_by_position = lapply(data_by_position, function(data_pos) {
+    beta_zero = mean(data_pos$cap_pct_team)
+    n = length(data_pos$cap_pct_team)
+    lm(cap_pct_team~team-1, data=data_pos, offset=rep(beta_zero, n))
+})
+
+coeff_by_position = lapply(lm_by_position, function(lm_obj) summary(lm_obj)$coefficients)
+
+# Holm-Bonferroni correction with level alpha = 0.05
+
+HB_correction_by_position = lapply(coeff_by_position, function(coeff, alpha = 0.05) {
+    pval = coeff[,"Pr(>|t|)"]
+    ord = order(pval)
+    pval_ordered = pval[ord]
+    
+    K = length(pval)
+    rejection_rho = alpha / (K + 1 - (1:K))
+    k = min(which(pval_ordered > rejection_rho))
+    
+    res = coeff[ord[1:(k-1)],]
+    if(k<=2) { 
+        res = t(res)
+        rownames(res) = rownames(coeff)[ord[1]]
+    }
+    return(res)
+}, alpha=0.05)
+
+HB_correction_by_position
+```
+
+## Interpretation
+
+In each position, 1-4 teams have significantly different salary cap strategies compared to the league average. For example, Detroit Lions invest about 3.02\% more of their salary cap in the QB position compared to the league average. 
+
+
+# Question 3: How do allocations relate to outcomes?
+
+```{r}
+cap_year <- read_csv("../data/processed/capital_by_position_year.csv")
+cap_year <- cap_year %>%
+  mutate(
+    position = factor(position),
+    year_c   = year - min(year)   # e.g., 0 for 2013, 1 for 2014, ...
+  )
+
+glimpse(cap_year)
+summary(cap_year)
+```
+
+
+```{r}
+ggplot(cap_year, aes(x = year, y = cap_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide salary cap share by position over time",
+    x = "Season",
+    y = "Share of league cap"
+  ) +
+  theme_minimal()
+```
+The above figure shows how much of the league’s salary cap each position gets from 2013 to 2024. Defensive line (DL) and offensive line (OL) usually get the biggest shares, followed by defensive backs (DB) and wide receivers (WR). Kicker (K), punter (P), and long snapper (LS) always get very small amounts. Most positions do not change very much over time, but there are a few patterns: OL and WR seem to get a little more cap share over the years, while DB and running back (RB) seem to get a little less.
+```{r}
+ggplot(cap_year, aes(x = year, y = draft_pct_lg,
+                     color = position, group = position)) +
+  geom_line() +
+  geom_point(alpha = 0.7) +
+  scale_x_continuous(breaks = sort(unique(cap_year$year))) +
+  labs(
+    title = "League-wide draft capital share by position over time",
+    x = "Season",
+    y = "Share of league draft capital"
+  ) +
+  theme_minimal()
+```
+The above figure shows a similar plot, but now for how draft picks are used. Compared to cap spending, the draft shares jump around more from year to year. This makes sense because draft choices depend on how strong each draft class is and what teams need that year. Defensive backs (DB), defensive line (DL), running backs (RB), and wide receivers (WR) usually get the most draft capital, while specialists like kicker (K), punter (P), and long snapper (LS) get very little.
+```{r}
+# Step 4: Full model for cap shares
+formula_cap <- cap_pct_lg ~ position * year_c
+
+model_cap <- lm(formula_cap, data = cap_year)
+summary(model_cap)
+```
+
+\section{Big regression model}
+
+```{r}
+# Step 5: Full model for draft shares
+formula_draft <- draft_pct_lg ~ position * year_c
+
+model_draft <- lm(formula_draft, data = cap_year)
+summary(model_draft)
+
+# Per-position simple time trends for draft share
+draft_slopes <- cap_year %>%
+  group_by(position) %>%
+  do(tidy(lm(draft_pct_lg ~ year_c, data = .))) %>%
+  ungroup() %>%
+  filter(term == "year_c") %>%
+  arrange(desc(estimate)) %>%
+  mutate(
+    slope_pct_points = 100 * estimate
+  )
+
+draft_slopes_report <- draft_slopes %>%
+  mutate(
+    estimate = round(estimate, 5),
+    slope_pct_points = round(slope_pct_points, 3),
+    p.value = signif(p.value, 3)
+  )
+
+draft_slopes_report
+```
+
+\section{Diagnostics}
+
+```{r}
+# Step 6: Diagnostics for cap model
+par(mfrow = c(2, 2))
+plot(model_cap)
+par(mfrow = c(1, 1))
+
+# Step 6b: Diagnostics for draft model
+par(mfrow = c(2, 2))
+plot(model_draft)
+par(mfrow = c(1, 1))
+
+```
+The diagnostic plots for both models look mostly fine. In the residuals vs fitted plots, the points are scattered around zero without a clear pattern, so using a straight-line (linear) trend over time seems okay. The Q–Q plots show small deviations from the straight line at the ends, which is not surprising because we are modelling proportions between 0 and 1. The scale–location plots show that the spread of the residuals is a bit larger for bigger fitted values, but not in a serious way. The residuals vs leverage plots show a few points with higher leverage, but nothing too extreme. Overall, the linear regression assumptions seem reasonable for our purpose of describing general time trends.
+
+\section{Final conclusion}
+We looked at how NFL spending by position has changed over time, using league-wide salary cap shares and draft shares from 2013 to 2024. The plots and regression models show that, for most positions, the shares stay fairly stable from year to year.
+
+For salary cap spending, any changes happen slowly. Defensive backs (DB) lose a small amount of cap share over time, while offensive line (OL) and wide receivers (WR) gain a bit. Specialists such as kicker (K), punter (P), and long snapper (LS) always use only a very small part of the cap, and their trends over time are tiny.
+
+For draft capital, the values move around more from year to year, but clear long-term trends are rare. The only strong pattern we see is that linebackers (LB) get a smaller share of draft picks over time. For most other positions, the estimated slopes are close to zero and not statistically significant, so we do not see a clear increase or decrease.
+
+Overall, our results suggest that the league’s spending and drafting by position are mostly stable over this period. The main changes are small: slightly more investment in OL and WR in cap spending, and slightly less investment in LB in the draft. These results give a numerical summary of how positional value has changed slowly in the NFL.
+
+
+# Discussion
+
+## Responses to peer review comments
+The issue of multi collinearity raised by Beichen has been addressed in question 3 (predicting outcomes from the given set of predictors). We had 14 columns with perfect multicollinearity, which had undefined coefficients in the full linear model. This was taken care of after using stepwise model selection and elastic net regularization. 
+
+Ruocheng’s comment on confounders has also been answered in question 3: our best performing model has a predictive power of only about 17%, indicating that factors other than just draft and salary have a more significant role to play in predicting the performance of teams. This includes factors like ability of coach, training strength, etc. 
+
+Along the lines of Mark’s suggestion, we have analyzed the change of allocations with time using time series methods in the final report. 
+
+Section 5.1 of Part 1 of the report talks about combining positions, partly answering David’s concern about there being a lot of positions. We avoid the potential double counting by creating a uniform positional mapping (more details in section 5.1).
+
+# Acknowledgement
+Jack performed the data preparation and exploratory analysis. The analysis of how allocations change over time (Question 1) was completed by Soumyajyoti, the study of how allocations vary with teams (Question 2) was carried out by Jaehyuk, and the analysis linking allocations to outcomes (Question 3) was done by Aniruddhan. Furthermore, ChatGPT was used to assist with coding and the overall structure of this report.
